@@ -340,6 +340,9 @@ class Trainer:
         if self.is_universal:
             # Universal model: regime-aware forward pass
             world_ids = batch["world_ids"]
+            # Move world_ids to device if it's a tensor
+            if isinstance(world_ids, torch.Tensor):
+                world_ids = world_ids.to(self.device)
             shock_idx = batch["shock_idx"].to(self.device)
             theta = batch["theta"].to(self.device) if "theta" in batch else None
             theta_mask = batch.get("theta_mask", None)
