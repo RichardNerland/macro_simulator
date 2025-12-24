@@ -1,0 +1,119 @@
+# Universal Emulator - Regime C (Partial: Theta + History, No Eps)
+#
+# Information Regime C has access to:
+# - world_id: Simulator family identifier (known)
+# - theta: Full parameter vector (known)
+# - shock_token: Which IRF to compute
+# - history: Observable trajectory (output, inflation, rate)
+#
+# No access to:
+# - eps_sequence: Shock realization path (must infer from history)
+#
+# This is an intermediate regime between A (full assist) and B1 (observables only).
+# The model knows the structural parameters but must infer the shock path from data.
+
+model:
+  type: universal
+
+  # Embedding dimensions
+  world_embed_dim: 32          # Dimension for world ID embedding
+  theta_embed_dim: 64          # Dimension for parameter embeddings
+  shock_embed_dim: 16          # Dimension for shock token embedding
+
+  # History encoder (replaces eps_sequence embedding)
+  history_encoder_type: gru    # "gru", "lstm", or "transformer"
+  history_hidden_dim: 96       # Hidden dimension for history encoder (smaller than B1)
+  history_layers: 2            # Number of layers in history encoder
+  history_pooling: last        # "last", "mean", or "attention"
+
+  # Architecture
+  trunk_dim: 256               # Hidden dimension for main trunk
+  trunk_layers: 4              # Number of transformer/MLP layers in trunk
+  n_heads: 4                   # Number of attention heads (if using transformer)
+  dropout: 0.1                 # Dropout rate
+
+  # Output
+  H: 40                        # IRF horizon length
+  n_obs: 3                     # Number of observables (output, inflation, rate)
+
+  # Architecture variant
+  encoder_type: transformer    # "transformer", "mlp", or "gru"
+
+training:
+  # Information regime
+  regime: C
+
+  # Optimization
+  batch_size: 128
+  lr: 1.0e-4
+  weight_decay: 0.01
+  grad_clip: 1.0
+
+  # Schedule
+  epochs: 100
+  warmup_epochs: 5
+  scheduler: cosine            # "cosine" or "none"
+
+  # Early stopping
+  patience: 10
+  min_delta: 1.0e-4
+
+  # Checkpointing
+  checkpoint_dir: runs/universal_regime_C
+  save_every_n_epochs: 10
+  save_best: true
+
+  # Logging
+  log_every_n_steps: 50
+  use_wandb: false
+  wandb_project: macro-emulator
+  wandb_run_name: universal_regime_C
+
+loss:
+  # Loss function type
+  type: multi_horizon          # "multi_horizon" or "combined"
+
+  # Horizon weighting
+  weight_scheme: exponential   # "uniform", "exponential", or "impact"
+  tau: 20.0                    # Decay parameter for exponential weighting
+  impact_length: 5             # Length of impact period for impact weighting
+
+  # Per-variable weights (optional)
+  # Regime C should perform better than B1, so might not need special weighting
+  per_variable_weights: null
+
+  # Smoothness regularization
+  # Moderate smoothness penalty (between A and B1)
+  smoothness_lambda: 0.015     # Coefficient for smoothness penalty (0.0 = disabled)
+
+data:
+  # Dataset path
+  dataset_path: datasets/v1.0/
+
+  # Which simulator families to include
+  worlds:
+    - lss
+    - var
+    - nk
+    - rbc
+    - switching
+    - zlb
+
+  # History configuration
+  history_length: 80           # Length of observable history to provide (in quarters)
+
+  # Data splits
+  train_split: train
+  val_split: val
+  test_split: test
+
+  # Dataloader settings
+  num_workers: 4
+  pin_memory: true
+  shuffle_train: true
+
+# Reproducibility
+seed: 42
+
+# Compute
+device: cuda  # "cuda" or "cpu"

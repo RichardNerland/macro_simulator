@@ -1,0 +1,26 @@
+model:
+  model_type: mlp
+  hidden_dim: 128
+  n_layers: 2
+  dropout: 0.1
+  max_horizon: 40
+  n_observables: 3
+batch_size: 128
+lr: 0.0001
+weight_decay: 0.01
+epochs: 100
+warmup_epochs: 5
+grad_clip: 1.0
+patience: 10
+loss_fn: mse
+weight_scheme: uniform
+dataset_path: datasets/v1.0/
+world: lss
+train_fraction: 0.7
+val_fraction: 0.15
+checkpoint_dir: runs/baseline_lss_mlp
+save_every_n_epochs: 10
+log_every_n_steps: 50
+use_wandb: false
+seed: 42
+device: cpu

@@ -1,0 +1,51 @@
+model:
+  world_embed_dim: 32
+  theta_embed_dim: 64
+  shock_embed_dim: 16
+  history_embed_dim: 128
+  trunk_dim: 256
+  trunk_layers: 4
+  trunk_activation: gelu
+  trunk_dropout: 0.1
+  trunk_use_layer_norm: true
+  irf_head_layers: 2
+  irf_head_dim: 128
+  trajectory_head_layers: 2
+  trajectory_head_dim: 128
+  max_horizon: 40
+  n_observables: 3
+regime: C
+batch_size: 256
+lr: 0.0001
+weight_decay: 0.01
+epochs: 100
+warmup_epochs: 5
+grad_clip: 1.0
+patience: 10
+min_delta: 0.0001
+loss_fn: mse
+weight_scheme: exponential
+weight_decay_tau: 20.0
+lambda_traj: 0.0
+lambda_reg: 0.0
+lambda_smooth: 0.01
+dataset_path: datasets/v1.0/
+worlds:
+- lss
+- var
+- nk
+- rbc
+- switching
+- zlb
+train_fraction: 0.7
+val_fraction: 0.15
+checkpoint_dir: runs/universal_regime_C
+save_every_n_epochs: 10
+save_best: true
+log_every_n_steps: 50
+use_wandb: false
+wandb_project: macro-emulator
+wandb_run_name: null
+seed: 42
+device: cpu
+metadata: {}

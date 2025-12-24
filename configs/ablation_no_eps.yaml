@@ -1,0 +1,103 @@
+# Ablation Study: No Shock Sequence
+#
+# Tests the contribution of eps_sequence (full shock path) by removing it.
+# Uses Regime A but with eps_embed_dim=0 to ablate the eps encoding.
+# (Regime C would require history data, which is not yet in dev dataset)
+
+model:
+  type: universal
+
+  # Embedding dimensions - ABLATION: eps_embed_dim = 0
+  world_embed_dim: 16
+  theta_embed_dim: 32
+  shock_embed_dim: 8
+  eps_embed_dim: 0        # ABLATED
+
+  # Architecture (same as smoke test)
+  trunk_dim: 128
+  trunk_layers: 2
+  n_heads: 2
+  dropout: 0.1
+
+  # Output
+  H: 40
+  n_obs: 3
+
+  # Architecture variant
+  encoder_type: transformer
+
+training:
+  # Information regime - ABLATION: Use Regime A with eps_embed_dim=0
+  regime: A
+
+  # Optimization
+  batch_size: 32
+  lr: 1.0e-4
+  weight_decay: 0.01
+  grad_clip: 1.0
+
+  # Schedule (reduced for ablation study)
+  epochs: 10
+  warmup_epochs: 1
+  scheduler: cosine
+
+  # Early stopping (disabled for ablation)
+  patience: 50
+  min_delta: 1.0e-4
+
+  # Checkpointing
+  checkpoint_dir: runs/ablation_no_eps
+  save_every_n_epochs: 5
+  save_best: true
+
+  # Logging
+  log_every_n_steps: 10
+  use_wandb: false
+  wandb_project: macro-emulator
+  wandb_run_name: ablation_no_eps
+
+loss:
+  # Loss function type
+  type: multi_horizon
+
+  # Horizon weighting
+  weight_scheme: exponential
+  tau: 20.0
+  impact_length: 5
+
+  # Per-variable weights
+  per_variable_weights: null
+
+  # Smoothness regularization
+  smoothness_lambda: 0.01
+
+data:
+  # Dataset path
+  dataset_path: datasets/v1.0-dev/
+
+  # Which simulator families to include
+  worlds:
+    - lss
+    - var
+    - nk
+
+  # Data splits
+  train_split: train
+  val_split: val
+  test_split: test_interpolation
+
+  # Dataloader settings
+  num_workers: 0
+  pin_memory: false
+  shuffle_train: true
+
+# Reproducibility
+seed: 42
+
+# Compute
+device: cpu
+
+# Metadata
+ablation:
+  component: eps_sequence
+  description: "Remove eps_sequence embedding (Regime A with eps_embed_dim=0) to test its contribution"

@@ -200,6 +200,9 @@ def collate_mixed_worlds(batch: list[dict[str, Any]]) -> dict[str, Any]:
         - theta_mask: (batch_size, max_n_params) boolean mask for valid params
         - irf_mask: (batch_size, max_n_shocks) boolean mask for valid shocks
         - world_groups: dict mapping world_id to list of batch indices
+        - shock_idx: (batch_size,) tensor of shock indices for each sample
+        - eps_sequence: (batch_size, T, max_n_shocks) shock sequence (if present)
+        - history: (batch_size, k, n_obs) observable history (if present)
     """
     batch_size = len(batch)
 
@@ -239,7 +242,15 @@ def collate_mixed_worlds(batch: list[dict[str, Any]]) -> dict[str, Any]:
             world_groups[world_id] = []
         world_groups[world_id].append(i)
 
-    return {
+    # Prepare shock_idx: For multi-shock IRFs, randomly select one shock per sample
+    # This assumes IRF training where we predict response to a single shock
+    shock_idx = torch.zeros(batch_size, dtype=torch.long)
+    for i in range(batch_size):
+        n_shocks = irfs[i].shape[0]
+        # For now, use first shock (can be randomized during training)
+        shock_idx[i] = 0
+
+    result = {
         "theta": theta_padded,
         "irf": irf_padded,
         "world_ids": world_ids,
@@ -247,7 +258,35 @@ def collate_mixed_worlds(batch: list[dict[str, Any]]) -> dict[str, Any]:
         "theta_mask": theta_mask,
         "irf_mask": irf_mask,
         "world_groups": world_groups,
+        "shock_idx": shock_idx,
     }
+
+    # Add optional fields if present in batch
+    if "eps_sequence" in batch[0]:
+        eps_sequences = [sample["eps_sequence"] for sample in batch]
+        # Determine max time dimension
+        T = max(eps.shape[0] for eps in eps_sequences)
+        eps_padded = torch.zeros(batch_size, T, max_n_shocks)
+        for i, eps in enumerate(eps_sequences):
+            T_i, n_shocks_i = eps.shape
+            eps_padded[i, :T_i, :n_shocks_i] = eps
+        result["eps_sequence"] = eps_padded
+
+    if "history" in batch[0]:
+        histories = [sample["history"] for sample in batch]
+        # Determine max history length
+        k = max(h.shape[0] for h in histories)
+        n_obs = histories[0].shape[1]
+        history_padded = torch.zeros(batch_size, k, n_obs)
+        history_mask = torch.zeros(batch_size, k, dtype=torch.bool)
+        for i, h in enumerate(histories):
+            k_i = h.shape[0]
+            history_padded[i, :k_i, :] = h
+            history_mask[i, :k_i] = True
+        result["history"] = history_padded
+        result["history_mask"] = history_mask
+
+    return result
 
 
 def collate_single_world(batch: list[dict[str, Any]]) -> dict[str, Any]:
@@ -264,6 +303,9 @@ def collate_single_world(batch: list[dict[str, Any]]) -> dict[str, Any]:
         - irf: (batch_size, n_shocks, H+1, 3) stacked IRFs
         - world_id: str (same for all samples)
         - sample_indices: list[int]
+        - shock_idx: (batch_size,) tensor of shock indices
+        - eps_sequence: (batch_size, T, n_shocks) shock sequence (if present)
+        - history: (batch_size, k, n_obs) observable history (if present)
     """
     batch_size = len(batch)
 
@@ -281,9 +323,26 @@ def collate_single_world(batch: list[dict[str, Any]]) -> dict[str, Any]:
     irf = torch.stack([sample["irf"] for sample in batch])  # (batch_size, n_shocks, H+1, 3)
     sample_indices = [sample["sample_idx"] for sample in batch]
 
-    return {
+    # Prepare shock_idx: For multi-shock IRFs, select one shock per sample
+    n_shocks = irf.shape[1]
+    shock_idx = torch.zeros(batch_size, dtype=torch.long)
+    # For now, use first shock (can be randomized during training)
+
+    result = {
         "theta": theta,
         "irf": irf,
         "world_id": world_id,
         "sample_indices": sample_indices,
+        "shock_idx": shock_idx,
     }
+
+    # Add optional fields if present
+    if "eps_sequence" in batch[0]:
+        result["eps_sequence"] = torch.stack([sample["eps_sequence"] for sample in batch])
+
+    if "history" in batch[0]:
+        result["history"] = torch.stack([sample["history"] for sample in batch])
+        if "history_mask" in batch[0]:
+            result["history_mask"] = torch.stack([sample["history_mask"] for sample in batch])
+
+    return result

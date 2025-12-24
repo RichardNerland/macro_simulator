@@ -1,0 +1,97 @@
+# Smoke Test Config - Universal Emulator Regime A
+#
+# Quick training run to verify UniversalEmulator works end-to-end.
+# Reduced epochs, batch size, and model dimensions for fast iteration.
+
+model:
+  type: universal
+
+  # Embedding dimensions (reduced for smoke test)
+  world_embed_dim: 16
+  theta_embed_dim: 32
+  shock_embed_dim: 8
+  eps_embed_dim: 16
+
+  # Architecture (smaller for smoke test)
+  trunk_dim: 128
+  trunk_layers: 2
+  n_heads: 2
+  dropout: 0.1
+
+  # Output
+  H: 40
+  n_obs: 3
+
+  # Architecture variant
+  encoder_type: transformer
+
+training:
+  # Information regime
+  regime: A
+
+  # Optimization
+  batch_size: 32
+  lr: 1.0e-4
+  weight_decay: 0.01
+  grad_clip: 1.0
+
+  # Schedule (reduced for smoke test)
+  epochs: 20
+  warmup_epochs: 2
+  scheduler: cosine
+
+  # Early stopping (disabled for smoke test)
+  patience: 50
+  min_delta: 1.0e-4
+
+  # Checkpointing
+  checkpoint_dir: runs/smoke_test_regime_A
+  save_every_n_epochs: 5
+  save_best: true
+
+  # Logging
+  log_every_n_steps: 10
+  use_wandb: false
+  wandb_project: macro-emulator
+  wandb_run_name: smoke_test_regime_A
+
+loss:
+  # Loss function type
+  type: multi_horizon
+
+  # Horizon weighting
+  weight_scheme: exponential
+  tau: 20.0
+  impact_length: 5
+
+  # Per-variable weights
+  per_variable_weights: null
+
+  # Smoothness regularization
+  smoothness_lambda: 0.01
+
+data:
+  # Dataset path (corrected for dev dataset)
+  dataset_path: datasets/v1.0-dev/
+
+  # Which simulator families to include (only available worlds)
+  worlds:
+    - lss
+    - var
+    - nk
+
+  # Data splits
+  train_split: train
+  val_split: val
+  test_split: test_interpolation
+
+  # Dataloader settings (reduced for smoke test)
+  num_workers: 0  # Use 0 for debugging (no multiprocessing)
+  pin_memory: false
+  shuffle_train: true
+
+# Reproducibility
+seed: 42
+
+# Compute
+device: cpu  # Use CPU for smoke test (CUDA if available)

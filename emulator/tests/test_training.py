@@ -300,3 +300,140 @@ def test_trainer_full_loop(mock_dataset_dir):
     # This test would require a mock model and actual training
     # Skipping for now - would be added in integration tests
     pytest.skip("Integration test - requires full setup")
+
+
+@pytest.mark.fast
+def test_collate_with_shock_idx(mock_dataset_dir):
+    """Test that collate functions include shock_idx."""
+    dataset = IRFDataset(
+        zarr_root=mock_dataset_dir,
+        world_ids=["test_world"],
+        split="train",
+    )
+
+    loader = DataLoader(
+        dataset,
+        batch_size=4,
+        shuffle=False,
+        collate_fn=collate_single_world,
+    )
+
+    batch = next(iter(loader))
+
+    # Check that shock_idx is present
+    assert "shock_idx" in batch
+    assert batch["shock_idx"].shape == (4,)
+    assert batch["shock_idx"].dtype == torch.long
+
+
+@pytest.mark.fast
+def test_collate_mixed_worlds_with_shock_idx(mock_dataset_dir):
+    """Test mixed-world collate includes shock_idx."""
+    dataset = IRFDataset(
+        zarr_root=mock_dataset_dir,
+        world_ids=["test_world"],
+        split="train",
+    )
+
+    loader = DataLoader(
+        dataset,
+        batch_size=4,
+        shuffle=False,
+        collate_fn=collate_mixed_worlds,
+    )
+
+    batch = next(iter(loader))
+
+    # Check that shock_idx is present
+    assert "shock_idx" in batch
+    assert batch["shock_idx"].shape == (4,)
+    assert batch["shock_idx"].dtype == torch.long
+
+
+@pytest.mark.fast
+def test_trainer_detects_universal_model():
+    """Test that Trainer correctly detects UniversalEmulator."""
+    from emulator.models.universal import UniversalEmulator
+
+    # Create a minimal UniversalEmulator
+    model = UniversalEmulator(
+        world_ids=["test_world"],
+        param_dims={"test_world": 3},
+        world_embed_dim=8,
+        theta_embed_dim=16,
+        shock_embed_dim=8,
+        trunk_dim=32,
+        trunk_layers=1,
+        H=10,
+        use_history_encoder=False,
+    )
+
+    # Create minimal config
+    config = TrainingConfig(
+        epochs=1,
+        regime="A",
+        checkpoint_dir="test_checkpoint",
+    )
+
+    # Mock loaders (we just need the structure)
+    from torch.utils.data import TensorDataset
+    dummy_data = TensorDataset(torch.randn(10, 3))
+    dummy_loader = DataLoader(dummy_data, batch_size=2)
+
+    # Initialize trainer
+    trainer = Trainer(model, dummy_loader, dummy_loader, config)
+
+    # Check detection
+    assert trainer.is_universal is True
+    assert trainer.regime == "A"
+
+
+@pytest.mark.fast
+def test_trainer_advanced_loss_creation():
+    """Test that advanced loss functions are created correctly."""
+    from emulator.models.universal import UniversalEmulator
+
+    model = UniversalEmulator(
+        world_ids=["test_world"],
+        param_dims={"test_world": 3},
+        world_embed_dim=8,
+        theta_embed_dim=16,
+        shock_embed_dim=8,
+        trunk_dim=32,
+        trunk_layers=1,
+        H=40,
+        use_history_encoder=False,
+    )
+
+    config = TrainingConfig(
+        epochs=1,
+        regime="A",
+        use_advanced_loss=True,
+        lambda_smooth=0.01,
+        horizon_weights="exponential",
+        checkpoint_dir="test_checkpoint",
+    )
+
+    from torch.utils.data import TensorDataset
+    dummy_data = TensorDataset(torch.randn(10, 3))
+    dummy_loader = DataLoader(dummy_data, batch_size=2)
+
+    trainer = Trainer(model, dummy_loader, dummy_loader, config)
+
+    # Check that loss function is CombinedLoss
+    from emulator.training.losses import CombinedLoss
+    assert isinstance(trainer.loss_fn, CombinedLoss)
+
+
+@pytest.mark.fast
+def test_training_config_with_regime():
+    """Test TrainingConfig with regime field."""
+    config = TrainingConfig(
+        lr=1e-4,
+        batch_size=64,
+        epochs=100,
+        regime="B1",
+    )
+
+    assert config.regime == "B1"
+    assert config.lr == 1e-4

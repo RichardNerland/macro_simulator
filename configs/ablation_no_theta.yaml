@@ -1,0 +1,103 @@
+# Ablation Study: No Parameter Encoding
+#
+# Tests the contribution of parameter (theta) encoding by removing it.
+# All other inputs (world_id, shock_token, eps_sequence) are provided.
+# Based on Regime A.
+
+model:
+  type: universal
+
+  # Embedding dimensions - ABLATION: theta_embed_dim = 0
+  world_embed_dim: 16
+  theta_embed_dim: 0      # ABLATED
+  shock_embed_dim: 8
+  eps_embed_dim: 16
+
+  # Architecture (same as smoke test)
+  trunk_dim: 128
+  trunk_layers: 2
+  n_heads: 2
+  dropout: 0.1
+
+  # Output
+  H: 40
+  n_obs: 3
+
+  # Architecture variant
+  encoder_type: transformer
+
+training:
+  # Information regime
+  regime: A
+
+  # Optimization
+  batch_size: 32
+  lr: 1.0e-4
+  weight_decay: 0.01
+  grad_clip: 1.0
+
+  # Schedule (reduced for ablation study)
+  epochs: 10
+  warmup_epochs: 1
+  scheduler: cosine
+
+  # Early stopping (disabled for ablation)
+  patience: 50
+  min_delta: 1.0e-4
+
+  # Checkpointing
+  checkpoint_dir: runs/ablation_no_theta
+  save_every_n_epochs: 5
+  save_best: true
+
+  # Logging
+  log_every_n_steps: 10
+  use_wandb: false
+  wandb_project: macro-emulator
+  wandb_run_name: ablation_no_theta
+
+loss:
+  # Loss function type
+  type: multi_horizon
+
+  # Horizon weighting
+  weight_scheme: exponential
+  tau: 20.0
+  impact_length: 5
+
+  # Per-variable weights
+  per_variable_weights: null
+
+  # Smoothness regularization
+  smoothness_lambda: 0.01
+
+data:
+  # Dataset path
+  dataset_path: datasets/v1.0-dev/
+
+  # Which simulator families to include
+  worlds:
+    - lss
+    - var
+    - nk
+
+  # Data splits
+  train_split: train
+  val_split: val
+  test_split: test_interpolation
+
+  # Dataloader settings
+  num_workers: 0
+  pin_memory: false
+  shuffle_train: true
+
+# Reproducibility
+seed: 42
+
+# Compute
+device: cpu
+
+# Metadata
+ablation:
+  component: theta
+  description: "Remove parameter encoding to test its contribution"

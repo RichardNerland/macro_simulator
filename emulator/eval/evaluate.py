@@ -36,7 +36,7 @@ except ImportError:
 
 from emulator.eval.metrics import (
     compute_sigma_from_data,
-    gap_metric,
+    exponential_weights,
     hf_ratio,
     iae,
     nrmse,
@@ -44,7 +44,6 @@ from emulator.eval.metrics import (
     sign_at_impact,
     sign_flip_count,
     uniform_weights,
-    exponential_weights,
 )
 
 
@@ -67,6 +66,167 @@ def load_checkpoint(checkpoint_path: Path) -> dict[str, Any]:
     return checkpoint
 
 
+def infer_model_architecture_from_state_dict(state_dict: dict[str, Any]) -> dict[str, Any]:
+    """Infer model architecture hyperparameters from state_dict.
+
+    Args:
+        state_dict: Model state dictionary
+
+    Returns:
+        Dictionary with inferred architecture parameters
+    """
+    arch = {}
+
+    # Infer world_embed_dim from world_embedding.embeddings.weight
+    if "world_embedding.embeddings.weight" in state_dict:
+        n_worlds, world_embed_dim = state_dict["world_embedding.embeddings.weight"].shape
+        arch["world_embed_dim"] = world_embed_dim
+        arch["n_worlds"] = n_worlds
+
+    # Infer theta_embed_dim from param_encoder.output_proj.0.bias
+    if "param_encoder.output_proj.0.bias" in state_dict:
+        theta_embed_dim = state_dict["param_encoder.output_proj.0.bias"].shape[0]
+        arch["theta_embed_dim"] = theta_embed_dim
+
+    # Infer shock_embed_dim from shock_encoder.output_proj.bias
+    if "shock_encoder.output_proj.bias" in state_dict:
+        shock_embed_dim = state_dict["shock_encoder.output_proj.bias"].shape[0]
+        arch["shock_embed_dim"] = shock_embed_dim
+
+    # Infer history_embed_dim if history encoder exists
+    if "history_encoder.output_proj.0.bias" in state_dict:
+        history_embed_dim = state_dict["history_encoder.output_proj.0.bias"].shape[0]
+        arch["history_embed_dim"] = history_embed_dim
+        arch["use_history_encoder"] = True
+    else:
+        arch["history_embed_dim"] = 64  # Default
+        arch["use_history_encoder"] = False
+
+    # Infer trunk_dim from trunk.input_proj.0.bias
+    if "trunk.input_proj.0.bias" in state_dict:
+        trunk_dim = state_dict["trunk.input_proj.0.bias"].shape[0]
+        arch["trunk_dim"] = trunk_dim
+
+    # Infer trunk architecture (mlp vs transformer)
+    if "trunk.layers.0.0.weight" in state_dict:
+        arch["trunk_architecture"] = "mlp"
+        # Count layers
+        trunk_layers = 0
+        for key in state_dict:
+            if key.startswith("trunk.layers.") and key.endswith(".0.weight"):
+                trunk_layers += 1
+        arch["trunk_layers"] = trunk_layers
+    elif "trunk.encoder.layers.0.self_attn.in_proj_weight" in state_dict:
+        arch["trunk_architecture"] = "transformer"
+        # Count layers
+        trunk_layers = 0
+        for key in state_dict:
+            if "trunk.encoder.layers." in key and ".self_attn.in_proj_weight" in key:
+                trunk_layers += 1
+        arch["trunk_layers"] = trunk_layers
+    else:
+        arch["trunk_architecture"] = "mlp"
+        arch["trunk_layers"] = 4  # Default
+
+    # Infer H and n_obs from irf_head.mlp
+    # Last layer shape is (H+1)*n_obs
+    # Find the last layer in the IRF head
+    last_layer_key = None
+    for key in sorted(state_dict.keys(), reverse=True):
+        if key.startswith("irf_head.mlp.") and key.endswith(".weight"):
+            last_layer_key = key
+            break
+
+    if last_layer_key is not None:
+        output_size = state_dict[last_layer_key].shape[0]
+        # Assume n_obs = 3 (standard)
+        n_obs = 3
+        H = (output_size // n_obs) - 1
+        arch["H"] = H
+        arch["n_obs"] = n_obs
+
+    return arch
+
+
+def load_universal_model(checkpoint_path: Path) -> Any:
+    """Load UniversalEmulator from checkpoint.
+
+    Args:
+        checkpoint_path: Path to checkpoint file (.pt)
+
+    Returns:
+        Loaded UniversalEmulator model in eval mode
+
+    Raises:
+        ImportError: If PyTorch or model dependencies not available
+        FileNotFoundError: If checkpoint not found
+        KeyError: If checkpoint missing required keys
+    """
+    if not TORCH_AVAILABLE:
+        raise ImportError("PyTorch is required for model loading. Install with: pip install torch")
+
+    from emulator.models.universal import UniversalEmulator
+
+    # Load checkpoint
+    checkpoint = load_checkpoint(checkpoint_path)
+
+    # Get state dict
+    if "model_state_dict" not in checkpoint:
+        raise KeyError("Checkpoint missing 'model_state_dict' key")
+
+    state_dict = checkpoint["model_state_dict"]
+
+    # Infer architecture from state dict
+    arch = infer_model_architecture_from_state_dict(state_dict)
+
+    # Get world IDs and param dims from checkpoint or defaults
+    if "world_ids" in checkpoint:
+        world_ids = checkpoint["world_ids"]
+    else:
+        # Infer from state dict if possible
+        n_worlds = arch.get("n_worlds", 6)
+        world_ids = ["lss", "var", "nk", "rbc", "switching", "zlb"][:n_worlds]
+
+    if "param_dims" in checkpoint:
+        param_dims = checkpoint["param_dims"]
+    else:
+        # Default param dims for each world
+        default_dims = {
+            "lss": 36,
+            "var": 15,
+            "nk": 11,
+            "rbc": 8,
+            "switching": 18,
+            "zlb": 13,
+        }
+        param_dims = {wid: default_dims.get(wid, 36) for wid in world_ids}
+
+    # Create model with inferred architecture
+    model = UniversalEmulator(
+        world_ids=world_ids,
+        param_dims=param_dims,
+        world_embed_dim=arch.get("world_embed_dim", 32),
+        theta_embed_dim=arch.get("theta_embed_dim", 64),
+        shock_embed_dim=arch.get("shock_embed_dim", 16),
+        history_embed_dim=arch.get("history_embed_dim", 64),
+        trunk_dim=arch.get("trunk_dim", 256),
+        trunk_layers=arch.get("trunk_layers", 4),
+        trunk_architecture=arch.get("trunk_architecture", "mlp"),
+        H=arch.get("H", 40),
+        n_obs=arch.get("n_obs", 3),
+        use_history_encoder=arch.get("use_history_encoder", False),
+        dropout=0.1,  # Dropout not used in eval mode anyway
+    )
+
+    # Load state dict
+    model.load_state_dict(state_dict)
+
+    # Set to eval mode
+    model.eval()
+
+    return model
+
+
 def load_dataset_split(
     dataset_path: Path,
     world_id: str,
@@ -87,23 +247,34 @@ def load_dataset_split(
     """
     world_dir = dataset_path / world_id
 
-    # Load manifest to get split indices
-    manifest_path = dataset_path / "manifest.json"
-    if not manifest_path.exists():
-        raise FileNotFoundError(f"Manifest not found: {manifest_path}")
+    # Try loading splits from world-specific splits.json first
+    world_splits_path = world_dir / "splits.json"
+    if world_splits_path.exists():
+        with open(world_splits_path) as f:
+            world_splits = json.load(f)
 
-    with open(manifest_path) as f:
-        manifest = json.load(f)
+        if split_name not in world_splits:
+            raise ValueError(f"Split {split_name} not found for world {world_id} in {world_splits_path}")
 
-    # Get split indices for this world
-    if world_id not in manifest.get("splits", {}):
-        raise ValueError(f"World {world_id} not found in manifest splits")
+        split_indices = np.array(world_splits[split_name])
+    else:
+        # Fall back to manifest-based splits
+        manifest_path = dataset_path / "manifest.json"
+        if not manifest_path.exists():
+            raise FileNotFoundError(f"Neither {world_splits_path} nor {manifest_path} found")
 
-    world_splits = manifest["splits"][world_id]
-    if split_name not in world_splits:
-        raise ValueError(f"Split {split_name} not found for world {world_id}")
+        with open(manifest_path) as f:
+            manifest = json.load(f)
 
-    split_indices = np.array(world_splits[split_name])
+        # Get split indices for this world
+        if world_id not in manifest.get("splits", {}):
+            raise ValueError(f"World {world_id} not found in manifest splits")
+
+        world_splits = manifest["splits"][world_id]
+        if split_name not in world_splits:
+            raise ValueError(f"Split {split_name} not found for world {world_id}")
+
+        split_indices = np.array(world_splits[split_name])
 
     # Load data
     irfs_store = zarr.open(world_dir / "irfs.zarr", mode="r")
@@ -130,16 +301,18 @@ def compute_predictions(
     shock_idx: int = 0,
     H: int = 40,
     batch_size: int = 32,
+    regime: str = "A",
 ) -> npt.NDArray:
     """Compute model predictions for a batch of parameters.
 
     Args:
-        model: Trained emulator model
+        model: Trained emulator model (UniversalEmulator)
         theta: Parameter array, shape (n_samples, n_params)
         world_id: Simulator identifier
         shock_idx: Which shock IRF to compute
         H: Horizon length
         batch_size: Batch size for inference
+        regime: Information regime ("A", "B1", or "C")
 
     Returns:
         Predictions, shape (n_samples, H+1, 3)
@@ -154,14 +327,19 @@ def compute_predictions(
     with torch.no_grad():  # type: ignore
         for i in range(0, n_samples, batch_size):
             batch_theta = torch.from_numpy(theta[i:i+batch_size]).float()  # type: ignore
+            batch_size_actual = batch_theta.shape[0]
 
-            # Assume model has a forward signature: (theta, world_id, shock_idx, H)
-            # This may need adjustment based on actual model interface
+            # Create shock_idx tensor for batch
+            shock_idx_tensor = torch.full((batch_size_actual,), shock_idx, dtype=torch.long)
+
+            # Call UniversalEmulator forward
+            # For Regime A: world_id, theta, shock_idx (no history needed)
+            # For Regime B1/C: would need history, but we focus on Regime A for now
             batch_preds = model(
+                world_id=world_id,  # String, will be broadcast to batch
+                shock_idx=shock_idx_tensor,
                 theta=batch_theta,
-                world_id=world_id,
-                shock_idx=shock_idx,
-                H=H,
+                regime=regime,
             )
 
             predictions.append(batch_preds.cpu().numpy())
@@ -234,16 +412,18 @@ def evaluate_on_split(
     split_name: str,
     shock_idx: int = 0,
     weight_scheme: str = "uniform",
+    regime: str = "A",
 ) -> dict[str, Any]:
     """Evaluate model on a specific split.
 
     Args:
-        model: Trained emulator model
+        model: Trained emulator model (or None for oracle/ground-truth mode)
         dataset_path: Root dataset directory
         world_id: Simulator identifier
         split_name: Split to evaluate on
         shock_idx: Which shock IRF to compute
         weight_scheme: Horizon weighting scheme
+        regime: Information regime ("A", "B1", or "C")
 
     Returns:
         Dictionary with metrics and metadata
@@ -258,9 +438,19 @@ def evaluate_on_split(
     H = y_true.shape[1] - 1
 
     # Compute predictions
-    # For now, we'll use ground truth as a placeholder
-    # In actual use, replace with: y_pred = compute_predictions(model, theta, world_id, shock_idx, H)
-    y_pred = y_true  # PLACEHOLDER: Replace with actual model predictions
+    if model is None:
+        # Oracle mode: use ground truth
+        y_pred = y_true
+    else:
+        # Model mode: compute actual predictions
+        y_pred = compute_predictions(
+            model=model,
+            theta=theta,
+            world_id=world_id,
+            shock_idx=shock_idx,
+            H=H,
+            regime=regime,
+        )
 
     # Compute metrics
     metrics = compute_all_metrics(y_pred, y_true, weight_scheme=weight_scheme)
@@ -281,6 +471,7 @@ def evaluate_all_worlds(
     split_names: list[str],
     shock_idx: int = 0,
     weight_scheme: str = "uniform",
+    regime: str = "A",
 ) -> dict[str, Any]:
     """Evaluate model on all worlds and splits.
 
@@ -291,6 +482,7 @@ def evaluate_all_worlds(
         split_names: List of splits to evaluate
         shock_idx: Which shock IRF to compute
         weight_scheme: Horizon weighting scheme
+        regime: Information regime ("A", "B1", or "C")
 
     Returns:
         Nested dictionary with results:
@@ -316,7 +508,7 @@ def evaluate_all_worlds(
         for split_name in split_names:
             try:
                 metrics = evaluate_on_split(
-                    model, dataset_path, world_id, split_name, shock_idx, weight_scheme
+                    model, dataset_path, world_id, split_name, shock_idx, weight_scheme, regime
                 )
 
                 results["per_world_per_split"][world_id][split_name] = metrics
@@ -380,7 +572,7 @@ def aggregate_metrics(metrics_list: list[dict[str, Any]]) -> dict[str, float]:
         weights = [m.get("n_samples", 1) for m in metrics_list]
 
         if total_samples > 0:
-            aggregated[name] = sum(v * w for v, w in zip(values, weights)) / total_samples
+            aggregated[name] = sum(v * w for v, w in zip(values, weights, strict=False)) / total_samples
         else:
             aggregated[name] = 0.0
 
@@ -526,13 +718,22 @@ def main():
 
     # Load model
     model = None
+    regime = "A"  # Default regime
     if args.checkpoint:
         print(f"\nLoading checkpoint: {args.checkpoint}")
-        checkpoint = load_checkpoint(args.checkpoint)
+        try:
+            model = load_universal_model(args.checkpoint)
+            print(f"Loaded UniversalEmulator with {model.get_num_parameters():,} parameters")
 
-        # TODO: Instantiate actual model from checkpoint
-        # For now, we use None and fall back to ground truth
-        print("Warning: Model loading not implemented, using ground truth (oracle)")
+            # Try to extract regime from checkpoint
+            checkpoint = load_checkpoint(args.checkpoint)
+            if "config" in checkpoint and hasattr(checkpoint["config"], "regime"):
+                regime = checkpoint["config"].regime.value if hasattr(checkpoint["config"].regime, "value") else str(checkpoint["config"].regime)
+                print(f"Detected regime: {regime}")
+        except Exception as e:
+            print(f"Warning: Could not load model from checkpoint: {e}")
+            print("Falling back to oracle mode (ground truth)")
+            model = None
     else:
         print("\nNo checkpoint provided, using ground truth (oracle mode)")
 
@@ -545,6 +746,7 @@ def main():
         split_names=split_names,
         shock_idx=args.shock_idx,
         weight_scheme=args.weight_scheme,
+        regime=regime,
     )
 
     # Print summary

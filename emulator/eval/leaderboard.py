@@ -22,6 +22,19 @@ Usage:
         output_csv="comparison.csv",
         metric="nrmse",
     )
+
+Integration with UniversalEmulator:
+    The leaderboard automatically works with evaluation results from:
+    - evaluate.py (with UniversalEmulator checkpoint)
+    - Baseline models (MLP, Linear, GRU)
+    - Oracle/ground-truth results
+
+    All results must be in the standard JSON format produced by evaluate.py:
+    {
+        "aggregate": {"nrmse": ..., "iae": ..., ...},
+        "per_world": {"lss": {...}, "var": {...}, ...},
+        "per_split": {...}
+    }
 """
 
 import argparse
