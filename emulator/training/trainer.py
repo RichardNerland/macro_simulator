@@ -158,6 +158,9 @@ class Trainer:
 
         # Loss function
         self.loss_fn = self._create_loss_fn()
+        # Move loss function to device if it's an nn.Module (has registered buffers)
+        if isinstance(self.loss_fn, nn.Module):
+            self.loss_fn = self.loss_fn.to(self.device)
 
         # Horizon weights for multi-horizon loss (legacy, kept for compatibility)
         self.horizon_weights = self._create_horizon_weights() if not config.use_advanced_loss else None
