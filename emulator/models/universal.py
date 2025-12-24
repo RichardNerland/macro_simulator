@@ -615,6 +615,7 @@ class UniversalEmulator(nn.Module):
 
         # Store config
         self.world_ids = world_ids
+        self.world_to_idx = {wid: idx for idx, wid in enumerate(world_ids)}
         self.param_dims = param_dims
         self.max_params = max(param_dims.values())
         self.H = H
