@@ -224,9 +224,11 @@ class Trainer:
             warmup_scheduler = LambdaLR(self.optimizer, lr_lambda)
 
             # Cosine annealing after warmup
+            # Ensure T_max is at least 1 to avoid division by zero
+            t_max = max(1, total_steps - warmup_steps)
             cosine_scheduler = CosineAnnealingLR(
                 self.optimizer,
-                T_max=total_steps - warmup_steps,
+                T_max=t_max,
                 eta_min=self.config.lr * 0.01,
             )
 

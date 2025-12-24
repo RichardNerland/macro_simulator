@@ -32,11 +32,11 @@ python -m data.scripts.generate_dataset --world all --n_samples 10000 --seed 42 
 python -m data.scripts.validate_dataset --path datasets/v1.0/
 
 # Training
-python -m emulator.training.trainer --config configs/universal_regime_A.yaml
+python train_universal.py --config configs/universal_regime_A.yaml
 
 # LOWO (Leave-One-World-Out) Training
 for world in lss var nk rbc switching zlb; do
-    python -m emulator.training.trainer --config configs/lowo_exclude_${world}.yaml
+    python train_universal.py --config configs/lowo_exclude_${world}.yaml
 done
 
 # Evaluation

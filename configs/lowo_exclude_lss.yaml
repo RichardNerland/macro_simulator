@@ -38,7 +38,7 @@
 #   - Simulators: All 6 must be available (including LSS for evaluation)
 #
 # EXAMPLE COMMAND:
-#   python -m emulator.training.trainer --config configs/lowo_exclude_lss.yaml
+#   python train_universal.py --config configs/lowo_exclude_lss.yaml
 #
 # RELATED LOWO CONFIGS:
 #   - lowo_exclude_var.yaml

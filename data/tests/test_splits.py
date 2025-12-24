@@ -58,6 +58,27 @@ def sample_param_manifest():
     )
 
 
+@pytest.fixture
+def rbc_param_manifest():
+    """Create parameter manifest for RBC simulator.
+
+    RBC uses rho_a for BOTH slice predicate (rho_a > 0.95) AND
+    corner persistence stat, so it's prone to overlap bugs.
+    """
+    return ParameterManifest(
+        names=["rho_a", "sigma_a", "alpha", "beta", "delta"],
+        units=["-", "-", "-", "-", "-"],
+        bounds=np.array([
+            [0.5, 0.99],   # rho_a
+            [0.001, 0.05], # sigma_a
+            [0.25, 0.45],  # alpha
+            [0.95, 0.995], # beta
+            [0.02, 0.1],   # delta
+        ]),
+        defaults=np.array([0.9, 0.01, 0.33, 0.99, 0.025]),
+    )
+
+
 @pytest.mark.fast
 class TestSplitInterpolation:
     """Test suite for random interpolation split."""
@@ -467,6 +488,48 @@ class TestConstructAllSplits:
         }
 
         assert set(splits.keys()) == expected_keys
+
+    def test_slice_corner_always_disjoint(self, rbc_param_manifest):
+        """Test that slice and corner splits never overlap, even with overlap-prone params.
+
+        This test specifically targets the RBC case where rho_a is used BOTH in:
+        - Slice predicate: rho_a > 0.95
+        - Corner persistence stat: max(rho_a)
+
+        Samples with high rho_a AND high sigma_a could trigger both criteria.
+        The fix in construct_all_splits removes overlap from corner.
+        """
+        n_samples = 2000
+        seed = 42
+        rng = np.random.default_rng(seed)
+
+        # Generate theta with some high rho_a + high sigma_a samples
+        theta = np.zeros((n_samples, 5))
+        theta[:, 0] = rng.uniform(0.5, 0.99, n_samples)   # rho_a
+        theta[:, 1] = rng.uniform(0.001, 0.05, n_samples) # sigma_a
+        theta[:, 2] = rng.uniform(0.25, 0.45, n_samples)  # alpha
+        theta[:, 3] = rng.uniform(0.95, 0.995, n_samples) # beta
+        theta[:, 4] = rng.uniform(0.02, 0.1, n_samples)   # delta
+
+        # Force some samples to have BOTH high rho_a AND high sigma_a
+        # to maximize overlap potential
+        high_both_idx = np.arange(100)
+        theta[high_both_idx, 0] = rng.uniform(0.96, 0.99, 100)  # Very high rho_a
+        theta[high_both_idx, 1] = rng.uniform(0.04, 0.05, 100)  # Very high sigma_a
+
+        splits = construct_all_splits(theta, rbc_param_manifest, "rbc", seed)
+
+        # Explicit disjointness check
+        overlap = np.intersect1d(
+            splits["test_extrapolation_slice"],
+            splits["test_extrapolation_corner"]
+        )
+        assert len(overlap) == 0, (
+            f"Slice/corner have {len(overlap)} overlapping samples: {overlap[:5]}"
+        )
+
+        # Also validate all splits
+        validate_splits(splits, n_samples)
 
 
 @pytest.mark.fast

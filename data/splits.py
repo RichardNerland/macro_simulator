@@ -257,6 +257,12 @@ def construct_all_splits(
     slice_idx = split_extrapolation_slice(theta, param_manifest, world_id, seed)
     corner_idx = split_extrapolation_corner(theta, param_manifest, world_id, seed)
 
+    # 1b. Ensure disjoint: remove overlap from corner (keep slice as-is)
+    # This handles cases where predicates and summary stats use the same params
+    # (e.g., RBC: rho_a > 0.95 is both slice predicate AND persistence stat)
+    overlap = np.intersect1d(slice_idx, corner_idx)
+    corner_idx = np.setdiff1d(corner_idx, overlap)
+
     # 2. Ensure disjoint extrapolation sets
     extrap_idx = np.union1d(slice_idx, corner_idx)
 
