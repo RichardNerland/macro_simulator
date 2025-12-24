@@ -34,8 +34,20 @@ python -m data.scripts.validate_dataset --path datasets/v1.0/
 # Training
 python -m emulator.training.trainer --config configs/universal_regime_A.yaml
 
+# LOWO (Leave-One-World-Out) Training
+for world in lss var nk rbc switching zlb; do
+    python -m emulator.training.trainer --config configs/lowo_exclude_${world}.yaml
+done
+
 # Evaluation
 python -m emulator.eval.evaluate --checkpoint runs/universal_A/checkpoint.pt --dataset datasets/v1.0/
+
+# Final Results Generation (Sprint 5)
+python -m emulator.eval.final_results \
+    --output-dir results/final/ \
+    --universal-results results/universal_A.json \
+    --baseline-results "MLP:results/mlp.json,VAR:results/var.json" \
+    --specialist-results "lss:results/specialist_lss.json,var:results/specialist_var.json"
 ```
 
 ## Architecture

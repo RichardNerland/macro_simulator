@@ -11,7 +11,7 @@ Split types:
 
 import hashlib
 import json
-from typing import Callable
+from collections.abc import Callable
 
 import numpy as np
 
@@ -163,6 +163,69 @@ def split_extrapolation_corner(
     return corner_indices
 
 
+def split_lowo(
+    world_ids: list[str],
+    held_out_world: str,
+) -> dict[str, list[str]]:
+    """Leave-One-World-Out (LOWO) split for cross-world generalization.
+
+    Per spec §7.3: LOWO evaluation tests generalization by training on all
+    worlds except one, and testing on the held-out world.
+
+    Args:
+        world_ids: List of all available world identifiers
+        held_out_world: World to hold out for testing
+
+    Returns:
+        Dictionary with keys:
+        - "train_worlds": List of world_ids for training (all except held_out_world)
+        - "test_worlds": List containing only the held_out_world
+
+    Raises:
+        ValueError: If held_out_world not in world_ids
+
+    Example:
+        >>> split_lowo(["lss", "var", "nk", "rbc", "switching", "zlb"], "nk")
+        {
+            "train_worlds": ["lss", "var", "rbc", "switching", "zlb"],
+            "test_worlds": ["nk"]
+        }
+    """
+    if held_out_world not in world_ids:
+        raise ValueError(
+            f"held_out_world '{held_out_world}' not in world_ids {world_ids}"
+        )
+
+    train_worlds = [w for w in world_ids if w != held_out_world]
+    test_worlds = [held_out_world]
+
+    return {
+        "train_worlds": train_worlds,
+        "test_worlds": test_worlds,
+    }
+
+
+def get_lowo_world_lists(all_worlds: list[str], held_out_world: str) -> tuple[list[str], list[str]]:
+    """Convenience function to get train and test world lists for LOWO.
+
+    This is a simplified interface for the common use case of getting
+    just the train and test world lists.
+
+    Args:
+        all_worlds: List of all available world identifiers
+        held_out_world: World to hold out for testing
+
+    Returns:
+        Tuple of (train_worlds, test_worlds)
+
+    Example:
+        >>> get_lowo_world_lists(["lss", "var", "nk", "rbc"], "nk")
+        (["lss", "var", "rbc"], ["nk"])
+    """
+    split = split_lowo(all_worlds, held_out_world)
+    return split["train_worlds"], split["test_worlds"]
+
+
 def construct_all_splits(
     theta: np.ndarray,
     param_manifest: ParameterManifest,
@@ -212,7 +275,6 @@ def construct_all_splits(
     # We want final fractions relative to total: 80%, 10%, 5%
     train_end = int(0.80 * n_samples)
     val_end = int(0.90 * n_samples)
-    test_end = int(0.95 * n_samples)
 
     # Adjust for actual pool size
     train_end = min(train_end, n_pool)
@@ -459,8 +521,6 @@ def rbc_summary_stats(theta: np.ndarray, manifest: ParameterManifest) -> dict[st
 
 def var_summary_stats(theta: np.ndarray, manifest: ParameterManifest) -> dict[str, np.ndarray]:
     """VAR summary statistics: max coefficient (proxy for persistence), shock std dev."""
-    n_samples = theta.shape[0]
-
     # Persistence: max AR coefficient (simplified)
     persistence = np.max(np.abs(theta), axis=1)
 
@@ -475,8 +535,6 @@ def var_summary_stats(theta: np.ndarray, manifest: ParameterManifest) -> dict[st
 
 def lss_summary_stats(theta: np.ndarray, manifest: ParameterManifest) -> dict[str, np.ndarray]:
     """LSS summary statistics: max eigenvalue (persistence), process noise (volatility)."""
-    n_samples = theta.shape[0]
-
     # Similar heuristics to VAR
     persistence = np.max(np.abs(theta), axis=1)
     volatility = np.std(theta, axis=1)

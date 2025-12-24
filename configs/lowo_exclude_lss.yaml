@@ -1,0 +1,163 @@
+# ================================================================================
+# Leave-One-World-Out (LOWO) Generalization Test: Exclude LSS
+# ================================================================================
+#
+# PURPOSE:
+#   Test the emulator's ability to generalize to unseen simulator families
+#   (out-of-distribution generalization).
+#
+#   This config trains on 5 of 6 simulator families and evaluates on the
+#   held-out family. Measures transfer learning capability.
+#
+# INFORMATION REGIME:
+#   - Same as Regime A (full structural assist)
+#   - But training data EXCLUDES one simulator family
+#   - Evaluation on the excluded family tests generalization
+#
+# TRAINING/EVALUATION SPLIT:
+#   Train on: var, nk, rbc, switching, zlb (5 families)
+#   Held out: lss (1 family)
+#
+#   Performance on LSS data tests:
+#   - Can the model infer LSS dynamics from theta?
+#   - Does world embedding generalize to unseen worlds?
+#   - How much does diversity in training help?
+#
+# EXPECTED PERFORMANCE:
+#   - Should be worse than training on all 6 families
+#   - Error on LSS: ~20-40% higher than standard Regime A
+#   - Measures: (LOWO error) / (Full training error) ~ 1.2-1.4
+#
+# INTERPRETATION:
+#   - Ratio close to 1.0: Emulator generalizes well (robust)
+#   - Ratio > 1.5: Emulator relies on memorizing each family (not robust)
+#   - Expected: Moderate degradation (LSS is quite different from others)
+#
+# DEPENDENCIES:
+#   - Dataset: datasets/v1.0/ (all 6 simulators, but only 5 used for training)
+#   - Simulators: All 6 must be available (including LSS for evaluation)
+#
+# EXAMPLE COMMAND:
+#   python -m emulator.training.trainer --config configs/lowo_exclude_lss.yaml
+#
+# RELATED LOWO CONFIGS:
+#   - lowo_exclude_var.yaml
+#   - lowo_exclude_nk.yaml
+#   - lowo_exclude_rbc.yaml
+#   - lowo_exclude_switching.yaml
+#   - lowo_exclude_zlb.yaml
+#
+# ================================================================================
+
+model:
+  type: universal
+
+  # ============================================================================
+  # Model Configuration (Same as Full Regime A)
+  # ============================================================================
+  # LOWO uses same architecture as universal_regime_A.yaml
+  # The difference is in the DATA (one family excluded), not the model.
+
+  world_embed_dim: 32          # World embedding (must handle 5 training families + 1 test)
+  theta_embed_dim: 64
+  shock_embed_dim: 16
+  eps_embed_dim: 32
+
+  trunk_dim: 256
+  trunk_layers: 4
+  n_heads: 4
+  dropout: 0.1
+
+  H: 40
+  n_obs: 3
+
+  encoder_type: transformer
+
+training:
+  regime: A                    # Full Regime A (full structural assist)
+
+  # ============================================================================
+  # Training Configuration (Same as Full Regime A)
+  # ============================================================================
+  # LOWO uses same hyperparameters as standard training.
+  # Only the training data composition differs.
+
+  batch_size: 128
+  lr: 1.0e-4
+  weight_decay: 0.01
+  grad_clip: 1.0
+
+  epochs: 100
+  warmup_epochs: 5
+  scheduler: cosine
+
+  patience: 10
+  min_delta: 1.0e-4
+
+  checkpoint_dir: runs/lowo_exclude_lss
+                               # Separate directory for each LOWO experiment
+                               # Allows keeping baseline and LOWO results separate
+  save_every_n_epochs: 10
+  save_best: true
+
+  log_every_n_steps: 50
+  use_wandb: false
+  wandb_project: macro-emulator
+  wandb_run_name: lowo_exclude_lss
+
+loss:
+  type: multi_horizon
+  weight_scheme: exponential
+  tau: 20.0
+  impact_length: 5
+  per_variable_weights: null
+  smoothness_lambda: 0.01      # Same as full training
+
+data:
+  # Dataset path
+  dataset_path: datasets/v1.0/
+
+  # ============================================================================
+  # LOWO Simulator Selection (KEY DIFFERENCE)
+  # ============================================================================
+  # IMPORTANT: Exactly 5 of 6 families (exclude the held-out one)
+
+  worlds:
+    - var                      # Included in training
+    - nk                       # Included in training
+    - rbc                      # Included in training
+    - switching                # Included in training
+    - zlb                      # Included in training
+    # - lss                    # EXCLUDED - this is the held-out test family
+
+  # ============================================================================
+  # Held-Out World Metadata
+  # ============================================================================
+  # For evaluation scripts - tracks which simulator is being tested for generalization
+
+  held_out_world: lss          # Family excluded from training
+                               # Used for OOD (out-of-distribution) evaluation
+                               # Change for other LOWO experiments:
+                               # - lowo_exclude_var.yaml: held_out_world: var
+                               # - lowo_exclude_nk.yaml: held_out_world: nk
+                               # etc.
+
+  # Data splits
+  train_split: train           # Training split from the 5 included families
+  val_split: val               # Validation split from the 5 included families
+  test_split: test             # Test split (both included AND held-out families)
+                               # At eval time, filter to held_out_world only
+
+  # Dataloader settings
+  num_workers: 4
+  pin_memory: true
+  shuffle_train: true
+
+# ============================================================================
+# Meta Configuration
+# ============================================================================
+
+seed: 42                       # Fixed seed (same for all LOWO experiments)
+                               # Ensures fair comparison between different held-out worlds
+
+device: cuda                   # GPU for full training

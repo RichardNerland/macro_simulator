@@ -12,13 +12,14 @@ import pytest
 
 from data.splits import (
     SLICE_PREDICATES,
-    SUMMARY_STAT_FUNCTIONS,
     compute_split_algorithm_hash,
     compute_summary_stats,
     construct_all_splits,
+    get_lowo_world_lists,
     split_extrapolation_corner,
     split_extrapolation_slice,
     split_interpolation,
+    split_lowo,
     validate_splits,
 )
 
@@ -143,11 +144,11 @@ class TestSlicePredicates:
         """Test NK slice predicate: φ_π > 2.0."""
         # Create sample with φ_π = 2.5 (should be in slice)
         theta_high = np.array([0.99, 1.0, 2.5, 0.125, 0.8, 0.9, 0.01, 0.005])
-        assert SLICE_PREDICATES["nk"](theta_high, sample_param_manifest) == True
+        assert SLICE_PREDICATES["nk"](theta_high, sample_param_manifest)
 
         # Create sample with φ_π = 1.5 (should not be in slice)
         theta_low = np.array([0.99, 1.0, 1.5, 0.125, 0.8, 0.9, 0.01, 0.005])
-        assert SLICE_PREDICATES["nk"](theta_low, sample_param_manifest) == False
+        assert not SLICE_PREDICATES["nk"](theta_low, sample_param_manifest)
 
     def test_rbc_slice_predicate(self):
         """Test RBC slice predicate: ρ_a > 0.95."""
@@ -160,11 +161,11 @@ class TestSlicePredicates:
 
         # High persistence
         theta_high = np.array([0.99, 0.33, 0.025, 0.97, 0.01])
-        assert SLICE_PREDICATES["rbc"](theta_high, manifest) == True
+        assert SLICE_PREDICATES["rbc"](theta_high, manifest)
 
         # Low persistence
         theta_low = np.array([0.99, 0.33, 0.025, 0.85, 0.01])
-        assert SLICE_PREDICATES["rbc"](theta_low, manifest) == False
+        assert not SLICE_PREDICATES["rbc"](theta_low, manifest)
 
     def test_zlb_slice_predicate(self):
         """Test ZLB slice predicate: r_ss < 1.0."""
@@ -177,11 +178,11 @@ class TestSlicePredicates:
 
         # Low steady-state rate
         theta_low = np.array([0.99, 1.0, 1.5, 0.8])
-        assert SLICE_PREDICATES["zlb"](theta_low, manifest) == True
+        assert SLICE_PREDICATES["zlb"](theta_low, manifest)
 
         # High steady-state rate
         theta_high = np.array([0.99, 1.0, 1.5, 2.5])
-        assert SLICE_PREDICATES["zlb"](theta_high, manifest) == False
+        assert not SLICE_PREDICATES["zlb"](theta_high, manifest)
 
 
 @pytest.mark.fast
@@ -545,6 +546,141 @@ class TestSplitAlgorithmHash:
         hash2 = compute_split_algorithm_hash(config2)
 
         assert hash1 != hash2
+
+
+@pytest.mark.fast
+class TestLOWO:
+    """Test suite for Leave-One-World-Out (LOWO) split."""
+
+    def test_lowo_basic_functionality(self):
+        """Test basic LOWO split functionality."""
+        world_ids = ["lss", "var", "nk", "rbc", "switching", "zlb"]
+        held_out_world = "nk"
+
+        split = split_lowo(world_ids, held_out_world)
+
+        assert "train_worlds" in split
+        assert "test_worlds" in split
+        assert held_out_world not in split["train_worlds"]
+        assert held_out_world in split["test_worlds"]
+        assert len(split["test_worlds"]) == 1
+        assert len(split["train_worlds"]) == 5
+
+    def test_lowo_train_worlds_correct(self):
+        """Test that train_worlds contains all worlds except held_out_world."""
+        world_ids = ["lss", "var", "nk", "rbc", "switching", "zlb"]
+        held_out_world = "rbc"
+
+        split = split_lowo(world_ids, held_out_world)
+
+        expected_train = ["lss", "var", "nk", "switching", "zlb"]
+        assert set(split["train_worlds"]) == set(expected_train)
+        assert split["test_worlds"] == ["rbc"]
+
+    def test_lowo_disjoint_worlds(self):
+        """Test that train and test worlds are disjoint."""
+        world_ids = ["lss", "var", "nk", "rbc", "switching", "zlb"]
+
+        for held_out_world in world_ids:
+            split = split_lowo(world_ids, held_out_world)
+
+            train_set = set(split["train_worlds"])
+            test_set = set(split["test_worlds"])
+
+            # Check disjointness
+            overlap = train_set & test_set
+            assert len(overlap) == 0, f"Overlap found: {overlap}"
+
+            # Check coverage
+            total = train_set | test_set
+            assert total == set(world_ids)
+
+    def test_lowo_all_worlds_as_holdout(self):
+        """Test LOWO for each world as holdout."""
+        world_ids = ["lss", "var", "nk", "rbc", "switching", "zlb"]
+
+        for held_out_world in world_ids:
+            split = split_lowo(world_ids, held_out_world)
+
+            # Verify held-out world is in test
+            assert held_out_world in split["test_worlds"]
+            assert held_out_world not in split["train_worlds"]
+
+            # Verify counts
+            assert len(split["train_worlds"]) == len(world_ids) - 1
+            assert len(split["test_worlds"]) == 1
+
+    def test_lowo_invalid_world(self):
+        """Test that LOWO raises ValueError for invalid held_out_world."""
+        world_ids = ["lss", "var", "nk", "rbc", "switching", "zlb"]
+        invalid_world = "invalid_simulator"
+
+        with pytest.raises(ValueError, match="not in world_ids"):
+            split_lowo(world_ids, invalid_world)
+
+    def test_lowo_preserves_world_order(self):
+        """Test that LOWO preserves world order (excluding held-out world)."""
+        world_ids = ["lss", "var", "nk", "rbc", "switching", "zlb"]
+        held_out_world = "nk"
+
+        split = split_lowo(world_ids, held_out_world)
+
+        # Train worlds should preserve order
+        expected_train = ["lss", "var", "rbc", "switching", "zlb"]
+        assert split["train_worlds"] == expected_train
+
+    def test_lowo_single_world_holdout_size(self):
+        """Test that test_worlds always contains exactly one world."""
+        world_ids = ["lss", "var", "nk", "rbc", "switching", "zlb"]
+
+        for held_out_world in world_ids:
+            split = split_lowo(world_ids, held_out_world)
+            assert len(split["test_worlds"]) == 1
+            assert split["test_worlds"][0] == held_out_world
+
+    def test_lowo_two_worlds(self):
+        """Test LOWO with minimal case (2 worlds)."""
+        world_ids = ["lss", "var"]
+        held_out_world = "lss"
+
+        split = split_lowo(world_ids, held_out_world)
+
+        assert split["train_worlds"] == ["var"]
+        assert split["test_worlds"] == ["lss"]
+
+    def test_lowo_deterministic(self):
+        """Test that LOWO split is deterministic (no randomness)."""
+        world_ids = ["lss", "var", "nk", "rbc", "switching", "zlb"]
+        held_out_world = "switching"
+
+        split1 = split_lowo(world_ids, held_out_world)
+        split2 = split_lowo(world_ids, held_out_world)
+
+        assert split1["train_worlds"] == split2["train_worlds"]
+        assert split1["test_worlds"] == split2["test_worlds"]
+
+    def test_get_lowo_world_lists_convenience(self):
+        """Test the convenience function get_lowo_world_lists."""
+        world_ids = ["lss", "var", "nk", "rbc", "switching", "zlb"]
+        held_out_world = "nk"
+
+        train_worlds, test_worlds = get_lowo_world_lists(world_ids, held_out_world)
+
+        assert train_worlds == ["lss", "var", "rbc", "switching", "zlb"]
+        assert test_worlds == ["nk"]
+        assert len(train_worlds) == 5
+        assert len(test_worlds) == 1
+
+    def test_get_lowo_world_lists_matches_split_lowo(self):
+        """Test that convenience function matches split_lowo output."""
+        world_ids = ["lss", "var", "nk", "rbc", "switching", "zlb"]
+
+        for held_out_world in world_ids:
+            split = split_lowo(world_ids, held_out_world)
+            train_worlds, test_worlds = get_lowo_world_lists(world_ids, held_out_world)
+
+            assert train_worlds == split["train_worlds"]
+            assert test_worlds == split["test_worlds"]
 
 
 if __name__ == "__main__":
