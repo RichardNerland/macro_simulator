@@ -13,7 +13,10 @@ from simulators.base import (
 )
 from simulators.lss import LSSSimulator
 from simulators.nk import NKSimulator
+from simulators.rbc import RBCSimulator
+from simulators.switching import SwitchingSimulator
 from simulators.var import VARSimulator
+from simulators.zlb import ZLBSimulator
 
 __all__ = [
     "SimulatorAdapter",
@@ -28,4 +31,7 @@ __all__ = [
     "LSSSimulator",
     "VARSimulator",
     "NKSimulator",
+    "RBCSimulator",
+    "SwitchingSimulator",
+    "ZLBSimulator",
 ]

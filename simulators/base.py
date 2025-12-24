@@ -72,11 +72,13 @@ class SimulatorOutput:
         y_extra: Simulator-specific observables, shape (T, n_extra) or None
         x_state: Internal state trajectory, shape (T, n_state) (optional)
         regime_seq: Regime indicators for regime-switching models, shape (T,) (optional)
+        metadata: Additional simulator-specific metadata (e.g., binding_fraction for ZLB)
     """
     y_canonical: npt.NDArray[np.float64]  # Shape: (T, 3)
     y_extra: npt.NDArray[np.float64] | None = None  # Shape: (T, n_extra)
     x_state: npt.NDArray[np.float64] | None = None  # Shape: (T, n_state)
     regime_seq: npt.NDArray[np.int32] | None = None  # Shape: (T,)
+    metadata: dict[str, Any] | None = None  # Simulator-specific metadata
 
 
 class SimulatorAdapter(ABC):

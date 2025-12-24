@@ -4,15 +4,22 @@ Visualization tools for IRF evaluation.
 This module provides publication-quality plotting functions for impulse response functions
 and related diagnostics. All plots follow consistent styling conventions and support
 saving to various formats.
+
+Includes:
+- IRF panel plots from simulators
+- Dataset sanity plots (histograms, sample IRFs)
+- Comparison plots (ground truth vs prediction)
 """
 
 import argparse
+import json
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
 import numpy.typing as npt
+import zarr
 
 # Publication-quality plot styling
 PLOT_STYLE = {
@@ -289,6 +296,315 @@ def plot_irf_comparison(
     return fig
 
 
+def plot_parameter_histograms(
+    theta: npt.NDArray[np.float64],
+    param_names: list[str] | None = None,
+    world_id: str = "",
+    n_cols: int = 4,
+) -> plt.Figure:
+    """Plot histograms of parameter distributions from a dataset.
+
+    Args:
+        theta: Parameter array, shape (n_samples, n_params)
+        param_names: Names for each parameter (default: Parameter 0, 1, ...)
+        world_id: Simulator identifier for title
+        n_cols: Number of columns in subplot grid (default: 4)
+
+    Returns:
+        Matplotlib figure object
+    """
+    setup_plot_style()
+
+    n_params = theta.shape[1]
+    if param_names is None:
+        param_names = [f"Param {i}" for i in range(n_params)]
+
+    n_rows = (n_params + n_cols - 1) // n_cols
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(3 * n_cols, 2.5 * n_rows))
+    fig.suptitle(f"Parameter Distributions: {world_id.upper()}", fontsize=14, fontweight="bold")
+
+    if n_rows == 1:
+        axes = axes.reshape(1, -1)
+
+    for idx in range(n_params):
+        row, col = idx // n_cols, idx % n_cols
+        ax = axes[row, col]
+
+        ax.hist(theta[:, idx], bins=50, alpha=0.7,
+                color=COLOR_PALETTE.get(world_id.lower(), "#1f77b4"))
+        ax.set_xlabel(param_names[idx])
+        ax.set_ylabel("Count")
+
+        # Add statistics
+        mean_val = np.mean(theta[:, idx])
+        std_val = np.std(theta[:, idx])
+        ax.axvline(mean_val, color="red", linestyle="--", linewidth=1, label=f"μ={mean_val:.3f}")
+        ax.set_title(f"σ={std_val:.3f}", fontsize=9)
+
+    # Hide empty subplots
+    for idx in range(n_params, n_rows * n_cols):
+        row, col = idx // n_cols, idx % n_cols
+        axes[row, col].set_visible(False)
+
+    plt.tight_layout()
+    return fig
+
+
+def plot_sample_irfs(
+    irfs: npt.NDArray[np.float64],
+    n_samples: int = 10,
+    shock_idx: int = 0,
+    world_id: str = "",
+    obs_names: Sequence[str] | None = None,
+    seed: int = 42,
+) -> plt.Figure:
+    """Plot random sample of IRFs from a dataset.
+
+    Args:
+        irfs: IRF array, shape (n_total, n_shocks, H+1, n_obs)
+        n_samples: Number of samples to plot (default: 10)
+        shock_idx: Which shock to plot (default: 0)
+        world_id: Simulator identifier for title
+        obs_names: Observable names (default: canonical)
+        seed: Random seed for sample selection
+
+    Returns:
+        Matplotlib figure object
+    """
+    setup_plot_style()
+
+    if obs_names is None:
+        obs_names = CANONICAL_OBS
+
+    n_total, n_shocks, H_plus_1, n_obs = irfs.shape
+    H = H_plus_1 - 1
+
+    # Sample random indices
+    rng = np.random.default_rng(seed)
+    sample_indices = rng.choice(n_total, size=min(n_samples, n_total), replace=False)
+
+    fig, axes = plt.subplots(1, n_obs, figsize=(12, 4))
+    fig.suptitle(
+        f"Sample IRFs: {world_id.upper()} (Shock {shock_idx}, n={len(sample_indices)})",
+        fontsize=14,
+        fontweight="bold",
+    )
+
+    if n_obs == 1:
+        axes = [axes]
+
+    h_grid = np.arange(H + 1)
+
+    for obs_idx, ax in enumerate(axes):
+        for i, sample_idx in enumerate(sample_indices):
+            alpha = 0.5 + 0.5 * (i / len(sample_indices))  # Fade effect
+            ax.plot(
+                h_grid,
+                irfs[sample_idx, shock_idx, :, obs_idx],
+                alpha=alpha,
+                color=COLOR_PALETTE.get(world_id.lower(), "#1f77b4"),
+                linewidth=1,
+            )
+
+        ax.axhline(0, color="gray", linestyle="--", linewidth=0.8, alpha=0.5)
+        ax.set_xlabel("Horizon")
+        ax.set_ylabel(obs_names[obs_idx])
+        ax.set_title(obs_names[obs_idx], fontweight="bold")
+        ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    return fig
+
+
+def plot_irf_statistics(
+    irfs: npt.NDArray[np.float64],
+    shock_idx: int = 0,
+    world_id: str = "",
+    obs_names: Sequence[str] | None = None,
+    percentiles: tuple[float, float] = (5, 95),
+) -> plt.Figure:
+    """Plot IRF mean and percentile bands from a dataset.
+
+    Args:
+        irfs: IRF array, shape (n_total, n_shocks, H+1, n_obs)
+        shock_idx: Which shock to plot (default: 0)
+        world_id: Simulator identifier for title
+        obs_names: Observable names (default: canonical)
+        percentiles: Lower and upper percentile for bands (default: 5, 95)
+
+    Returns:
+        Matplotlib figure object
+    """
+    setup_plot_style()
+
+    if obs_names is None:
+        obs_names = CANONICAL_OBS
+
+    n_total, n_shocks, H_plus_1, n_obs = irfs.shape
+    H = H_plus_1 - 1
+
+    fig, axes = plt.subplots(1, n_obs, figsize=(12, 4))
+    fig.suptitle(
+        f"IRF Statistics: {world_id.upper()} (Shock {shock_idx}, n={n_total})",
+        fontsize=14,
+        fontweight="bold",
+    )
+
+    if n_obs == 1:
+        axes = [axes]
+
+    h_grid = np.arange(H + 1)
+    color = COLOR_PALETTE.get(world_id.lower(), "#1f77b4")
+
+    for obs_idx, ax in enumerate(axes):
+        irf_data = irfs[:, shock_idx, :, obs_idx]  # (n_total, H+1)
+
+        mean = np.mean(irf_data, axis=0)
+        p_low = np.percentile(irf_data, percentiles[0], axis=0)
+        p_high = np.percentile(irf_data, percentiles[1], axis=0)
+
+        ax.fill_between(h_grid, p_low, p_high, alpha=0.3, color=color,
+                        label=f"{percentiles[0]}-{percentiles[1]}%")
+        ax.plot(h_grid, mean, color=color, linewidth=2, label="Mean")
+        ax.axhline(0, color="gray", linestyle="--", linewidth=0.8, alpha=0.5)
+
+        ax.set_xlabel("Horizon")
+        ax.set_ylabel(obs_names[obs_idx])
+        ax.set_title(obs_names[obs_idx], fontweight="bold")
+        ax.legend(loc="best")
+        ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    return fig
+
+
+def load_dataset_for_plots(
+    dataset_path: str | Path,
+    world_id: str,
+) -> dict[str, Any]:
+    """Load dataset arrays and manifest for plotting.
+
+    Args:
+        dataset_path: Path to dataset root directory
+        world_id: Simulator identifier
+
+    Returns:
+        Dictionary with arrays and manifest info
+    """
+    dataset_path = Path(dataset_path)
+    world_dir = dataset_path / world_id
+
+    # Load arrays
+    trajectories = zarr.open(str(world_dir / "trajectories.zarr"), mode="r")
+    irfs = zarr.open(str(world_dir / "irfs.zarr"), mode="r")
+    theta = zarr.open(str(world_dir / "theta.zarr"), mode="r")
+
+    # Load manifest if available
+    manifest_path = dataset_path / "manifest.json"
+    manifest = None
+    param_names = None
+    shock_names = None
+
+    if manifest_path.exists():
+        with open(manifest_path) as f:
+            manifest = json.load(f)
+
+        if world_id in manifest.get("simulators", {}):
+            sim_info = manifest["simulators"][world_id]
+            param_names = sim_info.get("param_manifest", {}).get("names")
+            shock_names = sim_info.get("shock_manifest", {}).get("names")
+
+    return {
+        "trajectories": np.array(trajectories),
+        "irfs": np.array(irfs),
+        "theta": np.array(theta),
+        "manifest": manifest,
+        "param_names": param_names,
+        "shock_names": shock_names,
+    }
+
+
+def generate_sanity_plots(
+    dataset_path: str | Path,
+    world_ids: list[str] | None = None,
+    output_path: str | Path = "sanity_plots.png",
+    n_sample_irfs: int = 10,
+    seed: int = 42,
+) -> list[plt.Figure]:
+    """Generate comprehensive sanity plots for a dataset.
+
+    Creates parameter histograms, sample IRFs, and IRF statistics for each world.
+
+    Args:
+        dataset_path: Path to dataset root directory
+        world_ids: List of world IDs to plot (default: all in manifest)
+        output_path: Base output path (will be suffixed with plot type)
+        n_sample_irfs: Number of sample IRFs to plot
+        seed: Random seed for sample selection
+
+    Returns:
+        List of figure objects
+    """
+    dataset_path = Path(dataset_path)
+    output_path = Path(output_path)
+
+    # Get world IDs from manifest if not specified
+    manifest_path = dataset_path / "manifest.json"
+    if manifest_path.exists():
+        with open(manifest_path) as f:
+            manifest = json.load(f)
+        if world_ids is None:
+            world_ids = list(manifest.get("simulators", {}).keys())
+    elif world_ids is None:
+        # Find world directories
+        world_ids = [d.name for d in dataset_path.iterdir()
+                     if d.is_dir() and (d / "irfs.zarr").exists()]
+
+    figures = []
+    print(f"Generating sanity plots for worlds: {world_ids}")
+
+    for world_id in world_ids:
+        print(f"  Loading {world_id}...")
+        try:
+            data = load_dataset_for_plots(dataset_path, world_id)
+        except Exception as e:
+            print(f"    Error loading {world_id}: {e}")
+            continue
+
+        # 1. Parameter histograms
+        fig_hist = plot_parameter_histograms(
+            data["theta"],
+            param_names=data["param_names"],
+            world_id=world_id,
+        )
+        save_figure(fig_hist, output_path.with_stem(f"{output_path.stem}_{world_id}_params"))
+        figures.append(fig_hist)
+
+        # 2. Sample IRFs (for first shock)
+        fig_samples = plot_sample_irfs(
+            data["irfs"],
+            n_samples=n_sample_irfs,
+            shock_idx=0,
+            world_id=world_id,
+            seed=seed,
+        )
+        save_figure(fig_samples, output_path.with_stem(f"{output_path.stem}_{world_id}_samples"))
+        figures.append(fig_samples)
+
+        # 3. IRF statistics (for first shock)
+        fig_stats = plot_irf_statistics(
+            data["irfs"],
+            shock_idx=0,
+            world_id=world_id,
+        )
+        save_figure(fig_stats, output_path.with_stem(f"{output_path.stem}_{world_id}_stats"))
+        figures.append(fig_stats)
+
+        print(f"    Generated 3 plots for {world_id}")
+
+    return figures
+
+
 def save_figure(
     fig: plt.Figure,
     output_path: str | Path,
@@ -341,7 +657,7 @@ def save_figure(
 def main() -> None:
     """Command-line interface for generating IRF plots."""
     parser = argparse.ArgumentParser(
-        description="Generate IRF panel plots from simulators",
+        description="Generate IRF panel plots from simulators or datasets",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -353,20 +669,38 @@ Examples:
 
   # Generate multiple shocks per simulator
   python -m emulator.eval.plots --simulators lss,var --all-shocks --output multi_shock_panel.png
+
+  # Generate sanity plots from a dataset
+  python -m emulator.eval.plots --dataset datasets/v1.0-dev/ --output sprint2_sanity.png
+
+  # Sanity plots for specific worlds only
+  python -m emulator.eval.plots --dataset datasets/v1.0-dev/ --worlds lss,nk --output subset_sanity.png
         """,
     )
 
-    parser.add_argument(
+    # Mode selection (mutually exclusive)
+    mode_group = parser.add_mutually_exclusive_group(required=True)
+    mode_group.add_argument(
         "--simulators",
         type=str,
-        required=True,
-        help="Comma-separated list of simulators (e.g., 'lss,var,nk')",
+        help="Comma-separated list of simulators for direct IRF generation (e.g., 'lss,var,nk')",
     )
+    mode_group.add_argument(
+        "--dataset",
+        type=str,
+        help="Path to dataset for sanity plots (e.g., 'datasets/v1.0-dev/')",
+    )
+
     parser.add_argument(
         "--output",
         type=str,
         default="irf_panel.png",
         help="Output file path (default: irf_panel.png)",
+    )
+    parser.add_argument(
+        "--worlds",
+        type=str,
+        help="Comma-separated list of worlds for dataset mode (default: all)",
     )
     parser.add_argument(
         "--horizon",
@@ -410,16 +744,50 @@ Examples:
         default="png",
         help="Comma-separated output formats (e.g., 'png,pdf')",
     )
+    parser.add_argument(
+        "--n-samples",
+        type=int,
+        default=10,
+        help="Number of sample IRFs to plot in dataset mode (default: 10)",
+    )
 
     args = parser.parse_args()
 
+    # Dataset mode: generate sanity plots
+    if args.dataset:
+        world_ids = None
+        if args.worlds:
+            world_ids = [w.strip().lower() for w in args.worlds.split(",")]
+
+        print(f"Generating sanity plots from dataset: {args.dataset}")
+        generate_sanity_plots(
+            dataset_path=args.dataset,
+            world_ids=world_ids,
+            output_path=args.output,
+            n_sample_irfs=args.n_samples,
+            seed=args.seed,
+        )
+        print(f"\nSanity plot generation complete!")
+        return
+
+    # Simulator mode: generate IRF panel
     # Import simulators
-    from simulators import LSSSimulator, NKSimulator, VARSimulator
+    from simulators import (
+        LSSSimulator,
+        NKSimulator,
+        RBCSimulator,
+        SwitchingSimulator,
+        VARSimulator,
+        ZLBSimulator,
+    )
 
     simulator_map = {
         "lss": LSSSimulator,
         "var": VARSimulator,
         "nk": NKSimulator,
+        "rbc": RBCSimulator,
+        "switching": SwitchingSimulator,
+        "zlb": ZLBSimulator,
     }
 
     # Parse simulator names
