@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "macro-emulator"
+version = "0.1.0"
+description = "Universal Macro Emulator: Neural network for predicting IRFs across macroeconomic simulators"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Macro Emulator Team"}
+]
+keywords = ["macroeconomics", "machine-learning", "impulse-response", "emulator"]
+
+dependencies = [
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "zarr>=2.16.0",
+    "pandas>=2.0.0",
+    "pyarrow>=12.0.0",
+    "torch>=2.0.0",
+    "matplotlib>=3.7.0",
+    "pyyaml>=6.0",
+    "tqdm>=4.65.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.3.0",
+    "pytest-cov>=4.0.0",
+    "pytest-xdist>=3.3.0",
+    "ruff>=0.1.0",
+    "mypy>=1.5.0",
+    "pre-commit>=3.3.0",
+]
+
+[project.scripts]
+generate-dataset = "data.scripts.generate_dataset:main"
+validate-dataset = "data.scripts.validate_dataset:main"
+
+[tool.setuptools.packages.find]
+include = ["simulators*", "data*", "emulator*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "fast: Unit tests that run quickly (< 1s each)",
+    "slow: Statistical tests that require many samples (10-60s each)",
+    "integration: End-to-end pipeline tests (1-5 min)",
+]
+testpaths = ["simulators/tests", "data/tests", "emulator/tests"]
+addopts = "-v --tb=short"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "UP", # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true

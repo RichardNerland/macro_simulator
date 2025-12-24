@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(pytest:*)",
+      "Bash(pip install zarr)",
+      "Bash(python -m pytest -m \"fast\" -v --tb=short)",
+      "Bash(python -m pytest data/tests/test_data_pipeline.py -v --tb=long)",
+      "Bash(python:*)"
+    ]
+  }
+}
