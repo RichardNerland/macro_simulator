@@ -61,19 +61,23 @@ class WorldEmbedding(nn.Module):
         Returns:
             Embeddings, shape (batch, embed_dim)
         """
+        # Get device from embedding weights
+        device = self.embeddings.weight.device
+
         if isinstance(world_id, str):
             # Single world_id
-            idx = torch.tensor([self.world_to_idx[world_id]], dtype=torch.long)
+            idx = torch.tensor([self.world_to_idx[world_id]], dtype=torch.long, device=device)
             return self.embeddings(idx)  # (1, embed_dim)
 
         elif isinstance(world_id, list):
-            # List of world_ids
-            indices = torch.tensor([self.world_to_idx[wid] for wid in world_id], dtype=torch.long)
+            # List of world_ids (strings)
+            indices = torch.tensor([self.world_to_idx[wid] for wid in world_id], dtype=torch.long, device=device)
             return self.embeddings(indices)  # (batch, embed_dim)
 
         else:
-            # Already tensor of indices
-            return self.embeddings(world_id)  # (batch, embed_dim)
+            # Already tensor of indices - ensure on correct device
+            indices = world_id.to(device) if world_id.device != device else world_id
+            return self.embeddings(indices)  # (batch, embed_dim)
 
 
 class ParameterEncoder(nn.Module):
